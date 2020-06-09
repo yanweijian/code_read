@@ -212,6 +212,7 @@ void ImmUkfPda::measurementValidation(const autoware_msgs::DetectedObjectArray& 
       if (nis < smallest_nis)
       {
         smallest_nis = nis;
+        //将此目标存入target中的object_，即此target能找到相关联的传感器目标
         target.object_ = input.objects[i];
         smallest_nis_ind = i;
         exists_smallest_nis_object = true;
@@ -366,6 +367,7 @@ void ImmUkfPda::initTracker(const autoware_msgs::DetectedObjectArray& input, dou
 
 void ImmUkfPda::secondInit(UKF& target, const std::vector<autoware_msgs::DetectedObject>& object_vec, double dt)
 {
+  //src\autoware\messages\autoware_msgs\msg\DetectedObject.msg
   if (object_vec.size() == 0)
   {
     target.tracking_num_ = TrackingState::Die;
@@ -377,6 +379,7 @@ void ImmUkfPda::secondInit(UKF& target, const std::vector<autoware_msgs::Detecte
   // state update
   double target_x = object_vec[0].pose.position.x;
   double target_y = object_vec[0].pose.position.y;
+  
   double target_diff_x = target_x - target.x_merge_(0);
   double target_diff_y = target_y - target.x_merge_(1);
   double target_yaw = atan2(target_diff_y, target_diff_x);
@@ -437,6 +440,17 @@ void ImmUkfPda::updateTrackingNum(const std::vector<autoware_msgs::DetectedObjec
   return;
 }
 
+/*
+概率数据关联算法
+输入：
+  const autoware_msgs::DetectedObjectArray& input 输入检测到的目标列表
+  const double dt 当前目标帧与track之间的时间差，用于目标外推
+  UKF& target 需要被关联的track
+输出：
+  std::vector<bool>& matching_vec 匹配向量
+  std::vector<autoware_msgs::DetectedObject>& object_vec 与此track相关联的传感器目标
+  
+*/
 bool ImmUkfPda::probabilisticDataAssociation(const autoware_msgs::DetectedObjectArray& input, const double dt,
                                              std::vector<bool>& matching_vec,
                                              std::vector<autoware_msgs::DetectedObject>& object_vec, UKF& target)
@@ -449,8 +463,10 @@ bool ImmUkfPda::probabilisticDataAssociation(const autoware_msgs::DetectedObject
   if (use_sukf_)
   {
     max_det_z = target.z_pred_ctrv_;
+    //匀速转弯模型的状态预测值
     max_det_s = target.s_ctrv_;
     det_s = max_det_s.determinant();
+    //max_det_s矩阵的行列式
   }
   else
   {
@@ -460,14 +476,17 @@ bool ImmUkfPda::probabilisticDataAssociation(const autoware_msgs::DetectedObject
   }
 
   // prevent ukf not to explode
+  //防止滤波器参数爆炸
   if (std::isnan(det_s) || det_s > prevent_explosion_thres_)
   {
     target.tracking_num_ = TrackingState::Die;
+    //如果目标是死亡状态，则返回false
     success = false;
     return success;
   }
 
   bool is_second_init;
+  //如果跟踪状态为init，则需要进行二次初始化
   if (target.tracking_num_ == TrackingState::Init)
   {
     is_second_init = true;
@@ -789,6 +808,14 @@ void ImmUkfPda::tracker(const autoware_msgs::DetectedObjectArray& input,
   // start UKF process
   for (size_t i = 0; i < targets_.size(); i++)
   {
+    //遍历targets，对每个target都进行下面的处理
+    /*
+    具体流程：
+    判断track目标状态
+    对track进行状态估计
+    对track进行数据关联
+    根据关联结果对track进行更新
+    */
     targets_[i].is_stable_ = false;
     targets_[i].is_static_ = false;
 
@@ -807,6 +834,7 @@ void ImmUkfPda::tracker(const autoware_msgs::DetectedObjectArray& input,
     targets_[i].prediction(use_sukf_, has_subscribed_vectormap_, dt);
 
     std::vector<autoware_msgs::DetectedObject> object_vec;
+    //object_vec为输出，
     bool success = probabilisticDataAssociation(input, dt, matching_vec, object_vec, targets_[i]);
     if (!success)
     {
